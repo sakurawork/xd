@@ -11,13 +11,11 @@ import string
 from typing import List, Tuple
 import uuid
 from dataclasses import dataclass
-import json
 
 INPUT_FOLDER = "input_docs"
 OUTPUT_FOLDER = "output_docs"
 MODEL_PATH = "models/court_ner_model"
 DATABASE_FILE = "anonymization_mapping.db"
-
 
 @dataclass
 class EntityMapping:
@@ -27,7 +25,6 @@ class EntityMapping:
     document_id: str
     position: Tuple[int, int]
     timestamp: datetime
-
 
 class DataGenerator:
     def __init__(self):
@@ -80,7 +77,6 @@ class DataGenerator:
     def generate_case_number(self):
         return f"2-{secrets.randbelow(10000)}/{secrets.choice(range(2020, 2026))}"
 
-
 class EncryptionManager:
     def __init__(self):
         self.key_file = "encryption.key"
@@ -102,7 +98,6 @@ class EncryptionManager:
     
     def decrypt(self, encrypted_hex):
         return self.cipher.decrypt(bytes.fromhex(encrypted_hex)).decode()
-
 
 class DatabaseManager:
     def __init__(self, encryption_manager=None):
@@ -182,12 +177,10 @@ class DatabaseManager:
     def close(self):
         self.conn.close()
 
-
 class Anonymizer:
     def __init__(self, mode='replace'):
         self.mode = mode
         
-        # Загружаем модель только если она существует
         if os.path.exists(MODEL_PATH):
             self.tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
             self.model = AutoModelForTokenClassification.from_pretrained(MODEL_PATH)
@@ -208,44 +201,33 @@ class Anonymizer:
         self.stats = {'found': 0, 'processed': 0}
     
     def find_entities_by_patterns(self, text):
-        """Поиск сущностей по паттернам (если модель не загружена)"""
         entities = []
         
         patterns = {
             'PER': [
-                # ФИО полностью
                 r'\b[А-ЯЁ][а-яё]+(?:\s+[А-ЯЁ][а-яё]+){1,2}\b',
-                # Фамилия И.О.
                 r'\b[А-ЯЁ][а-яё]+\s+[А-ЯЁ]\.\s*[А-ЯЁ]\.\b'
             ],
             'ADDR': [
-                # Полный адрес
                 r'г\.\s*[А-ЯЁ][а-яё-]+,\s*(?:ул\.|просп\.|пер\.|б-р)\s*[А-ЯЁ][а-яё-]+,\s*д\.\s*\d+(?:\s*кв\.\s*\d+)?',
-                # Просто город
                 r'\bг\.\s*[А-ЯЁ][а-яё-]+\b'
             ],
             'DATE': [
-                # Дата в формате ДД.ММ.ГГГГ
                 r'\b\d{1,2}\.\d{1,2}\.\d{4}\b',
-                # Дата с месяцем словами
                 r'\b\d{1,2}\s+(?:января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)\s+\d{4}\b'
             ],
             'PASS': [
-                # Паспортные данные
                 r'\b(?:паспорт\s+)?(?:\d{4}\s+)?№?\s*\d{6}\b',
                 r'\bсерия\s*\d{4}\s*№\s*\d{6}\b'
             ],
             'INN': [
-                # ИНН
                 r'\bИНН\s*\d{10}(?:\d{2})?\b',
                 r'\b\d{10}(?:\d{2})?\b'
             ],
             'PHONE': [
-                # Телефон
                 r'\b(?:\+7|8)[\s\-\(]?\d{3}[\s\-\)]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}\b'
             ],
             'CASE': [
-                # Номер дела
                 r'\bДело\s*№?\s*[\w\-/]+\b',
                 r'\b№\s*[\w\-/]+\b'
             ]
@@ -254,7 +236,6 @@ class Anonymizer:
         for entity_type, regex_list in patterns.items():
             for pattern in regex_list:
                 for match in re.finditer(pattern, text, re.IGNORECASE):
-                    # Проверяем, что это не часть другого слова
                     start, end = match.span()
                     if start > 0 and text[start-1].isalnum():
                         continue
@@ -272,14 +253,12 @@ class Anonymizer:
         return entities
     
     def extract_entities(self, text):
-        """Извлечение сущностей из текста"""
         if self.use_nlp_model:
             return self._extract_with_nlp(text)
         else:
             return self.find_entities_by_patterns(text)
     
     def _extract_with_nlp(self, text):
-        """Извлечение сущностей с помощью NLP-модели"""
         inputs = self.tokenizer(text, return_tensors="pt", truncation=True, max_length=512)
         
         with torch.no_grad():
@@ -299,7 +278,6 @@ class Anonymizer:
                 continue
             
             if label.startswith('B-'):
-                # Сохраняем предыдущую сущность
                 if current_entity:
                     entity_text = self._tokens_to_text(current_entity)
                     if self._is_valid_entity(entity_text, current_type):
@@ -310,7 +288,6 @@ class Anonymizer:
                             'end': i
                         })
                 
-                # Начинаем новую
                 current_entity = [token]
                 current_type = label[2:]
                 current_start = i
@@ -331,7 +308,6 @@ class Anonymizer:
                 current_entity = []
                 current_type = None
         
-        # Последняя сущность
         if current_entity:
             entity_text = self._tokens_to_text(current_entity)
             if self._is_valid_entity(entity_text, current_type):
@@ -342,16 +318,13 @@ class Anonymizer:
                     'end': len(tokens)
                 })
         
-        # Конвертируем позиции в символы
         for entity in entities:
-            # Простая аппроксимация: каждый токен ≈ 5 символов
             entity['start_char'] = min(entity['start'] * 5, len(text))
             entity['end_char'] = min(entity['end'] * 5, len(text))
         
         return entities
     
     def _tokens_to_text(self, tokens):
-        """Конвертация токенов в текст"""
         text = ""
         for token in tokens:
             if token.startswith('##'):
@@ -363,31 +336,26 @@ class Anonymizer:
         return text.replace('▁', ' ').strip()
     
     def _is_valid_entity(self, text, entity_type):
-        """Проверка валидности найденной сущности"""
         if not text or len(text) < 2:
             return False
         
-        # Минимальная длина для разных типов сущностей
         min_lengths = {
-            'PER': 5,      # Иван И. -> 8 символов
-            'ADDR': 10,    # г. Москва -> 9 символов
-            'DATE': 4,     # 2024 -> 4 символа
-            'PASS': 8,     # 1234 №56 -> 8 символов
-            'INN': 10,     # 1234567890 -> 10 символов
-            'PHONE': 10,   # 9991234567 -> 10 символов
-            'CASE': 3      # №1 -> 2 символа
+            'PER': 5,
+            'ADDR': 10,
+            'DATE': 4,
+            'PASS': 8,
+            'INN': 10,
+            'PHONE': 10,
+            'CASE': 3
         }
         
         min_len = min_lengths.get(entity_type, 3)
         if len(text) < min_len:
             return False
         
-        # Дополнительные проверки для конкретных типов
         if entity_type == 'PER':
-            # ФИО должно содержать хотя бы один пробел
             if ' ' not in text:
                 return False
-            # Первая буква каждого слова должна быть заглавной
             words = text.split()
             if not all(word[0].isupper() for word in words if word):
                 return False
@@ -395,7 +363,6 @@ class Anonymizer:
         return True
     
     def process_document(self, input_path, output_path):
-        """Обработка документа"""
         doc_id = str(uuid.uuid4())[:8]
         doc = docx.Document(input_path)
         
@@ -406,21 +373,18 @@ class Anonymizer:
             if not text.strip():
                 continue
             
-            # Ищем сущности
             entities = self.extract_entities(text)
             self.stats['found'] += len(entities)
             
             if not entities:
                 continue
             
-            # Сортируем сущности с конца для корректной замены
             sorted_entities = sorted(entities, key=lambda x: x.get('start_char', text.find(x['text'])), reverse=True)
             
             for entity in sorted_entities:
                 original = entity['text']
                 etype = entity['type']
                 
-                # Находим позицию в тексте
                 if 'start_char' in entity:
                     pos = entity['start_char']
                     end_pos = entity['end_char']
@@ -432,10 +396,8 @@ class Anonymizer:
                     continue
                 
                 if self.mode == 'replace':
-                    # Замена на фиктивные данные
                     replacement = self._generate_replacement(etype, original)
                     
-                    # Сохраняем маппинг
                     entity_id = str(uuid.uuid4())[:8]
                     self.db_manager.save_replacement(
                         entity_id, doc_id, original, replacement, etype, pos, end_pos
@@ -445,12 +407,10 @@ class Anonymizer:
                     self.stats['processed'] += 1
                 
                 elif self.mode == 'encrypt':
-                    # Шифрование с заменой на короткий ID
                     encrypted = self.encryption_manager.encrypt(original)
                     entity_id = str(uuid.uuid4())[:8]
                     replacement = f"[ENC:{entity_id}]"
                     
-                    # Сохраняем зашифрованные данные
                     self.db_manager.save_encrypted_mapping(
                         entity_id, doc_id, encrypted, etype, pos, end_pos
                     )
@@ -459,27 +419,22 @@ class Anonymizer:
                     self.stats['processed'] += 1
                 
                 elif self.mode == 'blur':
-                    # Размытие (замена на блоки)
                     replacement = '█' * len(original)
                     text = text[:pos] + replacement + text[end_pos:]
                     self.stats['processed'] += 1
             
-            # Обновляем параграф
             if text != para.text:
                 para.clear()
                 para.add_run(text)
         
-        # Сохраняем информацию о документе
         self.db_manager.save_document(doc_id, os.path.basename(input_path), os.path.basename(output_path))
         
-        # Сохраняем документ
         doc.save(output_path)
         self.db_manager.close()
         
         return doc_id
     
     def _generate_replacement(self, entity_type, original=""):
-        """Генерация фиктивных данных для замены"""
         generators = {
             'PER': self.data_generator.generate_fio,
             'ADDR': self.data_generator.generate_address,
@@ -497,7 +452,6 @@ class Anonymizer:
             return f"[{entity_type}]"
     
     def decrypt_document(self, encrypted_file_path, output_path):
-        """Расшифровка документа (опционально)"""
         if self.mode != 'encrypt' or not hasattr(self, 'encryption_manager'):
             print("Режим шифрования не активен")
             return False
@@ -507,18 +461,15 @@ class Anonymizer:
         for para in doc.paragraphs:
             text = para.text
             
-            # Ищем все [ENC:ID] в тексте
             enc_pattern = r'\[ENC:([a-f0-9]+)\]'
             for match in re.finditer(enc_pattern, text, re.IGNORECASE):
                 entity_id = match.group(1)
                 
-                # Ищем в базе данных
                 entity_data = self.db_manager.get_entity_by_id(entity_id)
                 if entity_data:
-                    encrypted_text = entity_data[2]  # encrypted_text поле
+                    encrypted_text = entity_data[2]
                     try:
                         decrypted = self.encryption_manager.decrypt(encrypted_text)
-                        # Заменяем ID на расшифрованный текст
                         text = text.replace(match.group(0), decrypted)
                     except:
                         print(f"Ошибка расшифровки для ID: {entity_id}")
@@ -530,13 +481,10 @@ class Anonymizer:
         doc.save(output_path)
         return True
 
-
 def show_files():
-    """Показать доступные файлы"""
     files = [f for f in os.listdir(INPUT_FOLDER) if f.lower().endswith('.docx')]
     
     if not files:
-        print("Создаю пример документа...")
         doc = docx.Document()
         doc.add_paragraph("СУДЕБНОЕ РЕШЕНИЕ")
         doc.add_paragraph("Дело № 2-1234/2024")
@@ -554,9 +502,7 @@ def show_files():
     
     return files
 
-
 def main():
-    """Основная функция"""
     os.makedirs(INPUT_FOLDER, exist_ok=True)
     os.makedirs(OUTPUT_FOLDER, exist_ok=True)
     
@@ -619,7 +565,6 @@ def main():
             print(f"  Ключ шифрования: encryption.key")
             print(f"  База данных: {DATABASE_FILE}")
         
-        # Предложение расшифровать
         if mode == 'encrypt':
             decrypt_choice = input("\nПротестировать расшифровку? (да/нет): ")
             if decrypt_choice.lower() in ['да', 'yes', 'y', 'д']:
@@ -633,7 +578,6 @@ def main():
         print(f"\n✗ Ошибка: {e}")
         import traceback
         traceback.print_exc()
-
 
 if __name__ == "__main__":
     main()
